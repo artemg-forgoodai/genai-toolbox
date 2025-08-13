@@ -61,6 +61,7 @@ type Config struct {
 	Source       string   `yaml:"source" validate:"required"`
 	Description  string   `yaml:"description" validate:"required"`
 	AuthRequired []string `yaml:"authRequired"`
+	QueryOnly    bool     `yaml:"query_only"`
 }
 
 // validate interface
@@ -106,6 +107,7 @@ func (cfg Config) Initialize(srcs map[string]sources.Source) (tools.Tool, error)
 		AuthRequired: cfg.AuthRequired,
 		Client:       s.BigQueryClient(),
 		RestService:  s.BigQueryRestService(),
+		QueryOnly:    cfg.QueryOnly,
 		manifest:     tools.Manifest{Description: cfg.Description, Parameters: parameters.Manifest(), AuthRequired: cfg.AuthRequired},
 		mcpManifest:  mcpManifest,
 	}
@@ -122,6 +124,7 @@ type Tool struct {
 	Parameters   tools.Parameters `yaml:"parameters"`
 	Client       *bigqueryapi.Client
 	RestService  *bigqueryrestapi.Service
+	QueryOnly    bool
 	manifest     tools.Manifest
 	mcpManifest  tools.McpManifest
 }
@@ -155,6 +158,12 @@ func (t Tool) Invoke(ctx context.Context, params tools.ParamValues) (any, error)
 	}
 
 	statementType := dryRunJob.Statistics.Query.StatementType
+
+	// If query_only is enabled, only allow SELECT statements
+	if t.QueryOnly && statementType != "SELECT" {
+		return nil, fmt.Errorf("query_only mode is enabled, but the provided SQL is a %s statement. Only SELECT statements are allowed", statementType)
+	}
+
 	// JobStatistics.QueryStatistics.StatementType
 	query := t.Client.Query(sql)
 	query.Location = t.Client.Location

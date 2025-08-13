@@ -163,6 +163,7 @@ func TestBigQueryToolEndpoints(t *testing.T) {
 
 	runBigQueryExecuteSqlToolInvokeTest(t, select1Want, invokeParamWant, tableNameParam, ddlWant)
 	runBigQueryExecuteSqlToolInvokeDryRunTest(t, datasetName)
+	runBigQueryQueryOnlyToolTest(t, select1Want, tableNameParam)
 	runBigQueryDataTypeTests(t)
 	runBigQueryListDatasetToolInvokeTest(t, datasetName)
 	runBigQueryGetDatasetInfoToolInvokeTest(t, datasetName, datasetInfoWant)
@@ -304,6 +305,119 @@ func setupBigQueryTable(t *testing.T, ctx context.Context, client *bigqueryapi.C
 	}
 }
 
+func runBigQueryQueryOnlyToolTest(t *testing.T, select1Want, tableNameParam string) {
+	// Test cases for query_only functionality
+	invokeTcs := []struct {
+		name         string
+		api          string
+		requestBody  io.Reader
+		want         string
+		wantContains string
+		isErr        bool
+	}{
+		{
+			name:        "query_only tool allows SELECT",
+			api:         "http://127.0.0.1:5000/api/tool/my-query-only-exec-sql-tool/invoke",
+			requestBody: bytes.NewBuffer([]byte(`{"sql":"SELECT 1"}`)),
+			want:        select1Want,
+			isErr:       false,
+		},
+		{
+			name:         "query_only tool rejects CREATE",
+			api:          "http://127.0.0.1:5000/api/tool/my-query-only-exec-sql-tool/invoke",
+			requestBody:  bytes.NewBuffer([]byte(`{"sql":"CREATE TABLE test_table (id INT64)"}`)),
+			wantContains: "query_only mode is enabled, but the provided SQL is a CREATE statement",
+			isErr:        true,
+		},
+		{
+			name:         "query_only tool rejects INSERT",
+			api:          "http://127.0.0.1:5000/api/tool/my-query-only-exec-sql-tool/invoke",
+			requestBody:  bytes.NewBuffer([]byte(`{"sql":"INSERT INTO test_table VALUES (1)"}`)),
+			wantContains: "query_only mode is enabled, but the provided SQL is a INSERT statement",
+			isErr:        true,
+		},
+		{
+			name:         "query_only tool rejects UPDATE",
+			api:          "http://127.0.0.1:5000/api/tool/my-query-only-exec-sql-tool/invoke",
+			requestBody:  bytes.NewBuffer([]byte(`{"sql":"UPDATE test_table SET id = 2"}`)),
+			wantContains: "query_only mode is enabled, but the provided SQL is a UPDATE statement",
+			isErr:        true,
+		},
+		{
+			name:         "query_only tool rejects DELETE",
+			api:          "http://127.0.0.1:5000/api/tool/my-query-only-exec-sql-tool/invoke",
+			requestBody:  bytes.NewBuffer([]byte(`{"sql":"DELETE FROM test_table"}`)),
+			wantContains: "query_only mode is enabled, but the provided SQL is a DELETE statement",
+			isErr:        true,
+		},
+		{
+			name:        "full_access tool allows SELECT",
+			api:         "http://127.0.0.1:5000/api/tool/my-full-access-exec-sql-tool/invoke",
+			requestBody: bytes.NewBuffer([]byte(`{"sql":"SELECT 1"}`)),
+			want:        select1Want,
+			isErr:       false,
+		},
+		{
+			name:        "full_access tool allows CREATE",
+			api:         "http://127.0.0.1:5000/api/tool/my-full-access-exec-sql-tool/invoke",
+			requestBody: bytes.NewBuffer([]byte(`{"sql":"CREATE TABLE test_table_full_access (id INT64)"}`)),
+			want:        "Query executed successfully and returned no content.",
+			isErr:       false,
+		},
+	}
+
+	for _, tc := range invokeTcs {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest("POST", tc.api, tc.requestBody)
+			if err != nil {
+				t.Fatalf("unable to create request: %s", err)
+			}
+			req.Header.Add("Content-type", "application/json")
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("unable to send request: %s", err)
+			}
+			defer resp.Body.Close()
+
+			bodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("error reading response body: %s", err)
+			}
+			bodyStr := string(bodyBytes)
+
+			if tc.isErr {
+				if resp.StatusCode == http.StatusOK {
+					t.Fatalf("expected error but got success: %s", bodyStr)
+				}
+				if tc.wantContains != "" && !strings.Contains(bodyStr, tc.wantContains) {
+					t.Fatalf("expected error message to contain %q, but got: %s", tc.wantContains, bodyStr)
+				}
+			} else {
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("response status code is not 200, got %d: %s", resp.StatusCode, bodyStr)
+				}
+
+				// Check response body
+				var body map[string]interface{}
+				err = json.NewDecoder(bytes.NewReader(bodyBytes)).Decode(&body)
+				if err != nil {
+					t.Fatalf("error parsing response body: %s", err)
+				}
+
+				got, ok := body["result"].(string)
+				if !ok {
+					t.Fatalf("unable to find result in response body")
+				}
+
+				if !strings.Contains(got, tc.want) {
+					t.Fatalf("expected %q to contain %q, but it did not", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func addBigQueryPrebuiltToolsConfig(t *testing.T, config map[string]any) map[string]any {
 	tools, ok := config["tools"].(map[string]any)
 	if !ok {
@@ -321,6 +435,18 @@ func addBigQueryPrebuiltToolsConfig(t *testing.T, config map[string]any) map[str
 		"authRequired": []string{
 			"my-google-auth",
 		},
+	}
+	tools["my-query-only-exec-sql-tool"] = map[string]any{
+		"kind":        "bigquery-execute-sql",
+		"source":      "my-instance",
+		"description": "Tool to execute SELECT queries only",
+		"query_only":  true,
+	}
+	tools["my-full-access-exec-sql-tool"] = map[string]any{
+		"kind":        "bigquery-execute-sql",
+		"source":      "my-instance",
+		"description": "Tool to execute all SQL types",
+		"query_only":  false,
 	}
 	tools["my-list-dataset-ids-tool"] = map[string]any{
 		"kind":        "bigquery-list-dataset-ids",

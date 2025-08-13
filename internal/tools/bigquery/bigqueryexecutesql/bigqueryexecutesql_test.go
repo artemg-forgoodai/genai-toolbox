@@ -50,6 +50,49 @@ func TestParseFromYamlBigQueryExecuteSql(t *testing.T) {
 					Source:       "my-instance",
 					Description:  "some description",
 					AuthRequired: []string{},
+					QueryOnly:    false,
+				},
+			},
+		},
+		{
+			desc: "with query_only enabled",
+			in: `
+			tools:
+				query_only_tool:
+					kind: bigquery-execute-sql
+					source: my-instance
+					description: SELECT-only tool
+					query_only: true
+			`,
+			want: server.ToolConfigs{
+				"query_only_tool": bigqueryexecutesql.Config{
+					Name:         "query_only_tool",
+					Kind:         "bigquery-execute-sql",
+					Source:       "my-instance",
+					Description:  "SELECT-only tool",
+					AuthRequired: []string{},
+					QueryOnly:    true,
+				},
+			},
+		},
+		{
+			desc: "with query_only disabled",
+			in: `
+			tools:
+				full_access_tool:
+					kind: bigquery-execute-sql
+					source: my-instance
+					description: Full access tool
+					query_only: false
+			`,
+			want: server.ToolConfigs{
+				"full_access_tool": bigqueryexecutesql.Config{
+					Name:         "full_access_tool",
+					Kind:         "bigquery-execute-sql",
+					Source:       "my-instance",
+					Description:  "Full access tool",
+					AuthRequired: []string{},
+					QueryOnly:    false,
 				},
 			},
 		},
